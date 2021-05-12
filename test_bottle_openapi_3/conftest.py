@@ -1,6 +1,6 @@
 import pytest
 from webtest import TestApp
-from bottle import Bottle, request
+from bottle import Bottle, request, response
 
 from bottle_openapi_3 import OpenAPIPlugin
 
@@ -18,6 +18,32 @@ def openapi3_paths():
                             "application/json": {
                                 "schema": {
                                     "type": "object"
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            "post": {
+                "summary": "Create something",
+                "requestBody": {
+                    "description": "Input data",
+                    "required": True,
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "type": "object"
+                            }
+                        }
+                    }
+                },
+                "responses": {
+                    "201": {
+                        "description": "Thing created",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/FooObject"
                                 }
                             }
                         }
@@ -56,7 +82,29 @@ def openapi3_paths():
 
 
 @pytest.fixture
-def openapi3_spec(openapi3_paths):
+def openapi3_components():
+    return {
+        "schemas": {
+            "FooObject": {
+                "type": "object",
+                "properties": {
+                    "one": {
+                        "type": "number"
+                    },
+                    "two": {
+                        "type": "string"
+                    },
+                    "three": {
+                        "type": "object"
+                    }
+                },
+                "required": ["one", "two"]
+            }
+        }
+    }
+
+@pytest.fixture
+def openapi3_spec(openapi3_paths, openapi3_components):
     return {
         "openapi": "3.0.0",
         "info": {
@@ -64,7 +112,8 @@ def openapi3_spec(openapi3_paths):
             "description": "API for running tests",
             "version": "0.0.1"
         },
-        "paths": openapi3_paths
+        "paths": openapi3_paths,
+        "components": openapi3_components
     }
 
 
@@ -82,6 +131,20 @@ def bottle_app():
     @app.route("/foobar")
     def foobar_handler():
         return {"foo": "bar"}
+
+    @app.route("/foobar", method="POST")
+    def foobar_post_handler():
+        import logging
+        logging.warning("???")
+        response.status = 201
+        logging.warning("{0}".format(request.openapi_request))
+        return {
+            "one": 1.0,
+            "two": "???",
+            "three": {
+                "foo": "bar"
+            }
+        }
 
     @app.route("/baz")
     def baz_handler():

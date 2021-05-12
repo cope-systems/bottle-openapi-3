@@ -92,6 +92,13 @@ TODO
 Changelog
 --------------------------
 
+0.1.2 (May 2021)
+*****************
+
+Fixed an issue decoding the request body for HTTP methods like
+POST, PUT, etc.
+
+
 0.1.0 (Jan 2021)
 *****************
 

@@ -67,11 +67,14 @@ def _generate_request_parameters(req: Request) -> RequestParameters:
 
 
 def _bottle_request_to_openapi_request(req: Request) -> OpenAPIRequest:
+    # TODO: The default JSON deserializer for the OpenAPI toolkit does not handle
+    # bytes I/O or streams, it looks like it requires strings. Can we bolt in an
+    # alternate deserializer to make this work better?
     return OpenAPIRequest(
         full_url_pattern=BOTTLE_PATH_PARAMETER_REGEX.sub(r'/{\1}', req.route.rule),
         method=req.method.lower(),
         parameters=_generate_request_parameters(req),
-        body=req.body,
+        body=req.body.read(),
         mimetype=_get_mimetype(req.content_type)
     )
 
@@ -136,10 +139,57 @@ class OpenAPIPlugin(object):
                  adjust_api_base_path=True,
                  serve_openapi_schema=True,
                  openapi_schema_suburl=DEFAULT_SWAGGER_SCHEMA_SUBURL,
+                 openapi_schema_route_name=None,
                  serve_swagger_ui=False,
                  swagger_ui_schema_url=None,
                  swagger_ui_suburl=DEFAULT_SWAGGER_UI_SUBURL,
+                 swagger_ui_route_name=None,
                  swagger_ui_validator_url=None):
+        """
+        Create a new OpenAPI plugin for doing server-side validation in Bottle.
+
+        :param openapi_def: A dictionary representation of the OpenAPI spec for this API.
+        :type openapi_def: dict
+        :param validate_openapi_spec: Should we validate the given OpenAPI specification when loading the plugin?
+        :type validate_openapi_spec: bool
+        :param validate_requests: Should we validate incoming requests against the given OpenAPI specification?
+        :type validate_requests: bool
+        :param validate_responses: Should we validate outgoing responses against the given OpenAPI specification?
+        :type validate_responses: bool
+        :param auto_jsonify: Should we automatically convert API responses from the results of the
+            bottle routes into JSON?
+        :type auto_jsonify: bool
+        :param request_error_handler: An arity 2 callable that gets invoked when there is an
+            error validating the request.
+        :type request_error_handler: Callable
+        :param response_error_handler: An arity 3 callable that gets invoked when there is an error
+            validating the response.
+        :type response_error_handler: Callable
+        :param exception_handler: An arity 2 callable that gets invoked whenever there was an exception thrown
+            in a route used to handle an API route defined in the specification.
+        :type exception_handler: Callable
+        :param openapi_base_path: The base suburl for all API routes defined in this spec. If adjust_api_base_path
+           is true, this should override any settings in the specification.
+        :type: Optional[str]
+        :param adjust_api_base_path: Should we actually  alter the OpenAPI specification that's exposed to users to
+           show the openapi_base_path that was set above?
+        :type adjust_api_base_path: bool
+        :param serve_openapi_schema: Should we serve the OpenAPI specification to our users?
+        :type serve_openapi_schema: bool
+        :param openapi_schema_suburl: The suburl path used to serve the OpenAPI specification.
+        :type openapi_schema_suburl: str
+        :param openapi_schema_route_name: The bottle route name for the OpenAPI specification.
+        :type openapi_schema_route_name: Optional[str]
+        :param serve_swagger_ui: Should we serve the embedded Swagger UI for API discovery?
+        :type serve_swagger_ui: bool
+        :param swagger_ui_schema_url: The URL for the OpenAPI spec to load in the Swagger UI.
+        :type swagger_ui_schema_url: str
+        :param swagger_ui_suburl: The suburl to serve the embedded Swagger UI under.
+        :type swagger_ui_suburl: str
+        :param swagger_ui_route_name: The bottle route name for the base page of the embedded Swagger UI.
+        :type swagger_ui_route_name: Optional[str]
+        :param swagger_ui_validator_url: The URL to a Swagger validator to use in the UI.
+        """
         self.openapi_def = dict(openapi_def)
         if openapi_base_path is not None:
             self.openapi_def.update(basePath=openapi_base_path)
@@ -168,6 +218,7 @@ class OpenAPIPlugin(object):
 
         self.swagger_ui_validator_url = swagger_ui_validator_url
         self.openapi_schema_suburl = openapi_schema_suburl
+        self.openapi_schema_route_name = openapi_schema_route_name
         self.swagger_ui_suburl = swagger_ui_suburl
 
         self.openapi_base_path = openapi_base_path or urlparse(self.openapi_spec.default_url).path or '/'
@@ -176,10 +227,11 @@ class OpenAPIPlugin(object):
         fixed_base_path = (self.openapi_base_path.rstrip("/")) + "/"
         self.openapi_schema_url = urljoin(fixed_base_path, self.openapi_schema_suburl.lstrip("/"))
         self.swagger_ui_base_url = urljoin(fixed_base_path, self.swagger_ui_suburl.lstrip("/"))
+        self.swagger_ui_route_name = swagger_ui_route_name
 
     def setup(self, app):
         if self.serve_openapi_schema:
-            @app.get(self.openapi_schema_url)
+            @app.get(self.openapi_schema_url, name=self.openapi_schema_route_name)
             def swagger_schema():
                 spec_dict = self.openapi_def
                 if self.adjust_api_base_path and "basePath" in spec_dict:
@@ -190,7 +242,7 @@ class OpenAPIPlugin(object):
                 return spec_dict
 
         if self.serve_swagger_ui:
-            @app.get(self.swagger_ui_base_url)
+            @app.get(self.swagger_ui_base_url, name=self.swagger_ui_route_name)
             def swagger_ui_index():
                 if self.swagger_ui_schema_url is not None and callable(self.swagger_ui_schema_url):
                     schema_url = self.swagger_ui_schema_url()
